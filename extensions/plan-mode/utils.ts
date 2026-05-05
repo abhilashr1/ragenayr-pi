@@ -79,16 +79,53 @@ export interface TodoItem {
 
 export function extractTodoItems(message: string): TodoItem[] {
 	const items: TodoItem[] = [];
-	const headerMatch = message.match(/\*{0,2}Plan:\*{0,2}\s*\n/i);
-	if (!headerMatch) return items;
+	const seen = new Set<string>();
 
-	const planSection = message.slice(message.indexOf(headerMatch[0]) + headerMatch[0].length);
-	const numberedPattern = /^\s*(\d+)[.)]\s+(.+)$/gm;
+	const sectionPattern = /^(?:#{1,6}\s*)?Task\s*Breakdown\s*:?\s*$/gim;
+	const sectionMatches = [...message.matchAll(sectionPattern)];
 
-	for (const match of planSection.matchAll(numberedPattern)) {
-		const text = match[2].replace(/\*+/g, "").trim();
-		if (text.length > 3) items.push({ step: items.length + 1, text, completed: false });
+	const sections: string[] = [];
+	for (let i = 0; i < sectionMatches.length; i++) {
+		const match = sectionMatches[i];
+		if (match.index === undefined) continue;
+		const start = match.index + match[0].length;
+		const end = i + 1 < sectionMatches.length && sectionMatches[i + 1].index !== undefined ? sectionMatches[i + 1].index : message.length;
+		const chunk = message.slice(start, end).trim();
+		if (chunk.length > 0) sections.push(chunk);
 	}
+
+	if (sections.length === 0) {
+		const planHeader = message.match(/^\*{0,2}Plan:?\*{0,2}\s*$/im);
+		if (planHeader?.index !== undefined) sections.push(message.slice(planHeader.index + planHeader[0].length).trim());
+	}
+
+	for (const section of sections) {
+		const nextHeadingIdx = section.search(/^#{1,6}\s+/m);
+		const planSection = nextHeadingIdx >= 0 ? section.slice(0, nextHeadingIdx) : section;
+		let parsedFromNumbered = false;
+
+		const numberedPattern = /^\s*(\d+)[.)]\s+(.+)$/gm;
+		for (const match of planSection.matchAll(numberedPattern)) {
+			const text = match[2].replace(/\*+/g, "").trim();
+			if (text.length > 3 && !seen.has(text)) {
+				parsedFromNumbered = true;
+				seen.add(text);
+				items.push({ step: items.length + 1, text, completed: false });
+			}
+		}
+
+		if (!parsedFromNumbered) {
+			const bulletPattern = /^\s*[-*]\s+(?:\[[ xX]\]\s*)?(.+)$/gm;
+			for (const match of planSection.matchAll(bulletPattern)) {
+				const text = match[1].replace(/\*+/g, "").trim();
+				if (text.length > 3 && !seen.has(text)) {
+					seen.add(text);
+					items.push({ step: items.length + 1, text, completed: false });
+				}
+			}
+		}
+	}
+
 	return items;
 }
 

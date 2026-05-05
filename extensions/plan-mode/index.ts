@@ -84,15 +84,27 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 					content: `[PLAN MODE ACTIVE]
 You are in read-only planning mode.
 
-Goal: inspect code and produce the smallest possible implementation chunks for weaker worker agents.
+Goal: inspect code and produce a complete planning summary plus actionable implementation chunks.
 
-Output format:
-Plan:
+Output format (use these exact sections, in order):
+## Problem Description
+- Concise restatement of the user request and constraints.
+
+## Observations
+- Key findings from the codebase and behavior.
+
+## Proposed Solution and Changes
+- What will be changed, why, and where (files/components).
+- Mention risks, assumptions, and validation approach.
+
+## Task Breakdown
 1. [file/path] exact tiny change + success check
 2. [file/path] exact tiny change + success check
 ...
 
 Rules:
+- The first three sections must be substantive, not placeholders.
+- "Task Breakdown" must be the final section.
 - Prefer chunks that can be implemented in <=10 minutes.
 - Keep each step to one focused edit target.
 - Include acceptance check per step.
@@ -107,7 +119,7 @@ Rules:
 			return {
 				message: {
 					customType: "plan-execution-context",
-					content: `[EXECUTING PLAN]\n${remaining}\n\nMark each done step with [DONE:n].`,
+					content: `[EXECUTING PLAN]\n${remaining}\n\nExecution rules:\n- First, identify which remaining tasks can be done in parallel vs sequentially.\n- If 2+ tasks are independent, run them in parallel using sub-agents.\n- Use sub-agents for isolated task chunks whenever useful.\n- Then merge and verify results.\n- Mark each done step with [DONE:n].`,
 					display: false,
 				},
 			};
@@ -135,7 +147,15 @@ Rules:
 				pi.setActiveTools(NORMAL_MODE_TOOLS);
 				updateStatus(ctx);
 				persistState();
-				pi.sendMessage({ customType: "plan-mode-execute", content: "Execute step 1.", display: true }, { triggerTurn: true });
+				pi.sendMessage(
+					{
+						customType: "plan-mode-execute",
+						content:
+							"Start execution: first classify remaining tasks into parallelizable vs sequential. Run independent tasks with sub-agents in parallel where possible, then continue remaining steps.",
+						display: true,
+					},
+					{ triggerTurn: true },
+				);
 			}
 		}
 	});
