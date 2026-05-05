@@ -13,7 +13,7 @@ pi install git:github.com/abhilashr1/ragenayr-pi
 Use the sync script from your repo clone:
 
 ```bash
-~/ragenayr-pi/pisync.sh
+~/code/ragenayr-pi/pisync.sh
 ```
 
 What it does:

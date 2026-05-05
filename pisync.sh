@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO_DIR="${HOME}/ragenayr-pi"
+REPO_DIR="${HOME}/code/ragenayr-pi"
 PI_DIR="${HOME}/.pi/agent"
 
 cd "$REPO_DIR"
