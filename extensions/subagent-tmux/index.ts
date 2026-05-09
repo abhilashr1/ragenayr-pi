@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type, type Static } from "typebox";
 
 const subagentSchema = Type.Object({
@@ -289,28 +289,6 @@ export default function subagentTmuxExtension(pi: ExtensionAPI): void {
         ],
         details: { status: "ok", mode: input.launchMode ?? "window", leftPrimaryPane: result.leftPrimaryPane, launched: result.launched },
       };
-    },
-  });
-
-  pi.registerCommand("subagents-test", {
-    description: "Launch 3 test subagents (sleep 2 && echo hello...)",
-    handler: async (_args, ctx: ExtensionContext) => {
-      const result = launchSubagents({
-        subagents: [
-          { agentName: "planner", taskId: "test-1", command: "sleep 2 && echo hello from planner" },
-          { agentName: "worker", taskId: "test-2", command: "sleep 2 && echo hello from worker" },
-          { agentName: "reviewer", taskId: "test-3", command: "sleep 2 && echo hello from reviewer" },
-        ],
-        workingDirectory: ctx.cwd,
-        launchMode: "window",
-        splitStrategy: "alternate",
-      });
-
-      if (!result.ok) {
-        ctx.ui.notify(result.error ?? "tmux test failed", "error");
-        return;
-      }
-      ctx.ui.notify(`Launched test panes: ${result.launched.map((p) => p.paneId).join(", ")}`, "success");
     },
   });
 }
