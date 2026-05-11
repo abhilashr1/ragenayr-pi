@@ -1,7 +1,14 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, TextContent } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Key } from "@mariozechner/pi-tui";
+import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import {
+	Container,
+	Key,
+	type SelectItem,
+	SelectList,
+	Text,
+} from "@mariozechner/pi-tui";
 import { extractTodoItems, isSafeCommand, markCompletedSteps, type TodoItem } from "./utils.js";
 
 const PLAN_MODE_TOOLS = ["read", "bash", "grep", "find", "ls"];
@@ -22,6 +29,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	let planModeEnabled = false;
 	let executionMode = false;
 	let todoItems: TodoItem[] = [];
+	// Model selections for plan/impl modes (provider + id)
+	let planModelProvider: string | null = null;
+	let planModelId: string | null = null;
+	let implModelProvider: string | null = null;
+	let implModelId: string | null = null;
+	// Original model to restore on plan-mode exit
+	let originalModelProvider: string | null = null;
+	let originalModelId: string | null = null;
 
 	pi.registerFlag("plan", {
 		description: "Start in plan mode (read-only exploration)",
@@ -34,7 +49,8 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const completed = todoItems.filter((t) => t.completed).length;
 			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("accent", `📋 ${completed}/${todoItems.length}`));
 		} else if (planModeEnabled) {
-			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", "⏸ plan"));
+			const modelLabel = planModelId ? ` ⏸ plan (${planModelId})` : " ⏸ plan";
+			ctx.ui.setStatus("plan-mode", ctx.ui.theme.fg("warning", modelLabel));
 		} else {
 			ctx.ui.setStatus("plan-mode", undefined);
 		}
@@ -45,15 +61,141 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			enabled: planModeEnabled,
 			todos: todoItems,
 			executing: executionMode,
+			planModelProvider,
+			planModelId,
+			implModelProvider,
+			implModelId,
+			originalModelProvider,
+			originalModelId,
 		});
 	}
 
-	function togglePlanMode(ctx: ExtensionContext): void {
-		planModeEnabled = !planModeEnabled;
-		executionMode = false;
-		todoItems = [];
-		pi.setActiveTools(planModeEnabled ? PLAN_MODE_TOOLS : NORMAL_MODE_TOOLS);
-		ctx.ui.notify(planModeEnabled ? "Plan mode enabled." : "Plan mode disabled.");
+	/**
+	 * Show a SelectList popup for model selection.
+	 * Returns the selected model as { provider, id } or null if cancelled.
+	 */
+	async function showModelSelector(
+		ctx: ExtensionContext,
+		title: string,
+	): Promise<{ provider: string; id: string } | null> {
+		const available = ctx.modelRegistry.getAvailable();
+		if (available.length === 0) {
+			ctx.ui.notify("No available models configured.", "warning");
+			return null;
+		}
+
+		const items: SelectItem[] = available.map((m) => ({
+			value: `${m.provider}/${m.id}`,
+			label: m.name ?? m.id,
+			description: `${m.provider}/${m.id}`,
+		}));
+
+		const result = await ctx.ui.custom<{ provider: string; id: string } | null>(
+			(tui, theme, _kb, done) => {
+				const container = new Container();
+
+				// Top border
+				container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+
+				// Title
+				container.addChild(
+					new Text(theme.fg("accent", theme.bold(title)), 1, 0),
+				);
+
+				// SelectList
+				const selectList = new SelectList(items, Math.min(items.length, 12), {
+					selectedPrefix: (t) => theme.fg("accent", t),
+					selectedText: (t) => theme.fg("accent", t),
+					description: (t) => theme.fg("muted", t),
+					scrollInfo: (t) => theme.fg("dim", t),
+					noMatch: (t) => theme.fg("warning", t),
+				});
+				selectList.onSelect = (item) => {
+					const [provider, ...idParts] = item.value.split("/");
+					done({ provider: provider!, id: idParts.join("/") });
+				};
+				selectList.onCancel = () => done(null);
+				container.addChild(selectList);
+
+				// Help text
+				container.addChild(
+					new Text(theme.fg("dim", "↑↓ navigate  •  enter select  •  esc cancel"), 1, 0),
+				);
+
+				// Bottom border
+				container.addChild(new DynamicBorder((s: string) => theme.fg("accent", s)));
+
+				return {
+					render: (w: number) => container.render(w),
+					invalidate: () => container.invalidate(),
+					handleInput: (data: string) => {
+						selectList.handleInput(data);
+						tui.requestRender();
+					},
+				};
+			},
+		);
+
+		return result;
+	}
+
+	async function togglePlanMode(ctx: ExtensionContext): Promise<void> {
+		if (!planModeEnabled) {
+			// --- Enabling plan mode: ask for model selections first ---
+
+			// Save original model for restore on exit
+			if (ctx.model) {
+				originalModelProvider = ctx.model.provider;
+				originalModelId = ctx.model.id;
+			}
+
+			// Step 1: Pick planning model
+			const planModel = await showModelSelector(ctx, "Select model for PLANNING");
+			if (!planModel) {
+				ctx.ui.notify("Plan mode cancelled.", "info");
+				return;
+			}
+			planModelProvider = planModel.provider;
+			planModelId = planModel.id;
+
+			// Step 2: Pick implementation model
+			const implModel = await showModelSelector(ctx, "Select model for IMPLEMENTATION");
+			if (!implModel) {
+				ctx.ui.notify("Plan mode cancelled.", "info");
+				return;
+			}
+			implModelProvider = implModel.provider;
+			implModelId = implModel.id;
+
+			// Switch to planning model
+			const planModelObj = ctx.modelRegistry.find(planModelProvider, planModelId);
+			if (planModelObj) {
+				await pi.setModel(planModelObj);
+				ctx.ui.notify(`Planning model: ${planModelProvider}/${planModelId}`, "info");
+			}
+
+			// Enable plan mode
+			planModeEnabled = true;
+			executionMode = false;
+			todoItems = [];
+			pi.setActiveTools(PLAN_MODE_TOOLS);
+			ctx.ui.notify("Plan mode enabled.");
+		} else {
+			// --- Disabling plan mode: restore original model ---
+			planModeEnabled = false;
+			executionMode = false;
+			todoItems = [];
+			pi.setActiveTools(NORMAL_MODE_TOOLS);
+
+			// Restore original model
+			if (originalModelProvider && originalModelId) {
+				const originalModel = ctx.modelRegistry.find(originalModelProvider, originalModelId);
+				if (originalModel) {
+					await pi.setModel(originalModel);
+				}
+			}
+			ctx.ui.notify("Plan mode disabled.");
+		}
 		updateStatus(ctx);
 		persistState();
 	}
@@ -145,6 +287,16 @@ Rules:
 				planModeEnabled = false;
 				executionMode = true;
 				pi.setActiveTools(NORMAL_MODE_TOOLS);
+
+				// Switch to implementation model
+				if (implModelProvider && implModelId) {
+					const implModel = ctx.modelRegistry.find(implModelProvider, implModelId);
+					if (implModel) {
+						await pi.setModel(implModel);
+						ctx.ui.notify(`Implementation model: ${implModelProvider}/${implModelId}`, "info");
+					}
+				}
+
 				updateStatus(ctx);
 				persistState();
 				pi.sendMessage(
@@ -165,12 +317,30 @@ Rules:
 		const entries = ctx.sessionManager.getEntries();
 		const state = entries
 			.filter((e: { type: string; customType?: string }) => e.type === "custom" && e.customType === "plan-mode")
-			.pop() as { data?: { enabled: boolean; todos?: TodoItem[]; executing?: boolean } } | undefined;
+			.pop() as {
+				data?: {
+					enabled: boolean;
+					todos?: TodoItem[];
+					executing?: boolean;
+					planModelProvider?: string | null;
+					planModelId?: string | null;
+					implModelProvider?: string | null;
+					implModelId?: string | null;
+					originalModelProvider?: string | null;
+					originalModelId?: string | null;
+				};
+			} | undefined;
 
 		if (state?.data) {
 			planModeEnabled = state.data.enabled ?? planModeEnabled;
 			todoItems = state.data.todos ?? todoItems;
 			executionMode = state.data.executing ?? executionMode;
+			planModelProvider = state.data.planModelProvider ?? planModelProvider;
+			planModelId = state.data.planModelId ?? planModelId;
+			implModelProvider = state.data.implModelProvider ?? implModelProvider;
+			implModelId = state.data.implModelId ?? implModelId;
+			originalModelProvider = state.data.originalModelProvider ?? originalModelProvider;
+			originalModelId = state.data.originalModelId ?? originalModelId;
 		}
 
 		if (planModeEnabled) pi.setActiveTools(PLAN_MODE_TOOLS);
