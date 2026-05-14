@@ -39,5 +39,7 @@ What it does:
 
 ## Available skills
 
+- `/answer <question>` — Prompt shortcut that uses the `answer` skill to answer codebase or business-logic questions with sourced `file:line` references.
+- `/skill:answer <question>` — Searches the current repo first, then related sibling repos when needed, and cites evidence for each answer.
 - `/skill:grill` — Grilling session that challenges plans against the domain model, sharpens terminology, and updates `CONTEXT.md`/ADRs inline.
 - `/skill:improve-architecture` — Finds deepening opportunities to improve testability, locality, leverage, and AI-navigability.
