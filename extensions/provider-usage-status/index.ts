@@ -173,10 +173,15 @@ function extractUsageFromJson(payload: unknown): ProviderUsage | undefined {
 	return { ...(fiveHour ? { "5h": fiveHour } : {}), ...(weekly ? { weekly } : {}) };
 }
 
+function isCursorProvider(provider: string): boolean {
+	return provider.toLowerCase().includes("cursor");
+}
+
 function getUsageEndpoint(provider: string): string | undefined {
 	const p = provider.toLowerCase();
 	if (p.includes("openai")) return process.env.PI_USAGE_ENDPOINT_OPENAI;
 	if (p.includes("opencode") || p.includes("go")) return process.env.PI_USAGE_ENDPOINT_OPENCODE;
+	if (p.includes("cursor")) return process.env.PI_USAGE_ENDPOINT_CURSOR;
 	return undefined;
 }
 
@@ -184,6 +189,7 @@ function getUsageToken(provider: string): string | undefined {
 	const p = provider.toLowerCase();
 	if (p.includes("openai")) return process.env.PI_USAGE_TOKEN_OPENAI ?? process.env.OPENAI_API_KEY;
 	if (p.includes("opencode") || p.includes("go")) return process.env.PI_USAGE_TOKEN_OPENCODE;
+	if (p.includes("cursor")) return process.env.PI_USAGE_TOKEN_CURSOR;
 	return undefined;
 }
 
@@ -292,7 +298,11 @@ function renderStatus(ctx: ExtensionContext): void {
 	const usage = state.usage ?? estimatedOpenCode;
 
 	if (!usage) {
-		if (state.turnsSeen > 0) {
+		if (isCursorProvider(provider)) {
+			// Cursor Agent SDK currently does not expose a reliable quota/limit window.
+			// Avoid showing a noisy "limits unavailable" status for Cursor models.
+			ctx.ui.setStatus("provider-usage", undefined);
+		} else if (state.turnsSeen > 0) {
 			const suffix = state.lastError ? ` (${state.lastError})` : "";
 			ctx.ui.setStatus("provider-usage", ctx.ui.theme.fg("dim", `${provider} limits: unavailable (${state.turnsSeen} turns, no provider headers${suffix})`));
 		} else {
@@ -307,6 +317,11 @@ function renderStatus(ctx: ExtensionContext): void {
 
 	const isEstimatedOpenCode = providerLower.includes("opencode-go") && !state.usage;
 	const prefix = isEstimatedOpenCode ? `${provider} est` : provider;
+	if (chunks.length === 0 && isCursorProvider(provider)) {
+		ctx.ui.setStatus("provider-usage", undefined);
+		return;
+	}
+
 	const text = chunks.length > 0 ? `${prefix} ${chunks.join(" • ")}` : `${provider} limits: unavailable`;
 	ctx.ui.setStatus("provider-usage", ctx.ui.theme.fg("dim", text));
 }

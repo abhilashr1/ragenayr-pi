@@ -29,6 +29,7 @@ What it does:
   - optional usage API polling via env vars:
     - `PI_USAGE_ENDPOINT_OPENAI`, `PI_USAGE_TOKEN_OPENAI`
     - `PI_USAGE_ENDPOINT_OPENCODE`, `PI_USAGE_TOKEN_OPENCODE`
+    - `PI_USAGE_ENDPOINT_CURSOR`, `PI_USAGE_TOKEN_CURSOR` (optional; otherwise Cursor usage status is hidden when no limit data is exposed)
   - opencode-go fallback estimate (when no limits API exists):
     - `PI_OPENCODE_LIMIT_5H_USD` (default `12`)
     - `PI_OPENCODE_LIMIT_WEEKLY_USD` (default `30`)
@@ -42,4 +43,5 @@ What it does:
 - `/answer <question>` — Prompt shortcut that uses the `answer` skill to answer codebase or business-logic questions with sourced `file:line` references.
 - `/skill:answer <question>` — Searches the current repo first, then related sibling repos when needed, and cites evidence for each answer.
 - `/skill:grill` — Grilling session that challenges plans against the domain model, sharpens terminology, and updates `CONTEXT.md`/ADRs inline.
+- `/skill:handover` — Writes a compact `handover.md` with session decisions, agreements, current state, and next steps.
 - `/skill:improve-architecture` — Finds deepening opportunities to improve testability, locality, leverage, and AI-navigability.
