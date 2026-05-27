@@ -19,6 +19,8 @@ This skill is an orchestrated implementation workflow:
 - Keep the main model in charge of product, architecture, scope, and final quality.
 - Use exactly one writer worker for the initial implementation. Do not launch parallel writers into the same worktree.
 - The implementation worker must use `model: "opencode-go/deepseek-v4-pro"` unless that model is unavailable; if unavailable, ask before substituting `deepseek-v4-flash` or another opencode-go model.
+- Use the `subagent(...)` tool (from the `pi-subagents` package) to delegate implementation. Do **not** run `pi -p` synchronously inside a bash call — that hides live output, risks blind timeouts, and prevents progress visibility.
+- Launch the worker async and poll its progress via `subagent({ action: "status", id: "..." })` or by checking `git diff --stat` on the active worktree. The async completion mechanism delivers the worker's handoff naturally; do not hard-kill with a fixed timeout.
 - The main/orchestrating model performs the final review and any fix-up edits manually with normal tools (`read`, `edit`, `write`, `bash`). Do not outsource final acceptance.
 - Always create/update a markdown task plan before implementation.
 - Do not silently expand scope. Ask the user before product, architecture, migration, security, or dependency decisions that are not implied by the requirement.
@@ -107,9 +109,11 @@ The task document must include these sections:
 
 The `Files likely to change` list should be based on code inspection, not guesses. It can include `unknown yet` only when discovery genuinely depends on implementation.
 
-### 3. Delegate implementation to DeepSeek worker
+### 3. Delegate implementation to DeepSeek worker via subagent
 
-Use the `pi-subagents` workflow if available. The parent/orchestrator should launch one worker with a concrete handoff and model override:
+Launch the worker using the `subagent(...)` tool. This gives live progress, natural completion, and no blind timeouts.
+
+**Launch the worker:**
 
 ```typescript
 subagent({
@@ -121,9 +125,31 @@ subagent({
 })
 ```
 
-If `subagent` is unavailable, stop after writing the task document and tell the user the exact worker handoff prompt to run manually. Do not pretend implementation happened.
+**Poll progress while the worker runs:**
 
-While the worker runs, the main model may read code, prepare validation, or refine review checklists, but must not edit the same files concurrently.
+After launching, the parent/orchestrator must not sit idle or apply a blind timeout. Instead, poll the worker every ~30–60 seconds:
+
+```typescript
+subagent({ action: "status", id: "<run-id>" })
+```
+
+Also check the active worktree for accumulating changes:
+
+```bash
+git status --short
+git diff --stat
+git diff --check
+```
+
+These checks give the user same-page visibility: they see the worker is alive, what files are changing, and whether the diff looks healthy.
+
+If the status poll shows the worker is stuck (no git activity, no log changes, no tool output across a reasonable idle window of ~180–300s), report that to the user and ask whether to wait longer, interrupt, or retry with tighter scope. Do not hard-kill the worker without asking.
+
+**When the worker completes:**
+
+The async completion delivers the worker's handoff into the parent session. If you were polling status, call `status` one final time or wait for the async delivery to arrive.
+
+If the `subagent` tool is unavailable, stop after writing the task document and tell the user the exact worker handoff prompt to run manually. Do **not** fall back to synchronous `pi -p` in bash.
 
 ### 4. Review the worker result against the plan
 
