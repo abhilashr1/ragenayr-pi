@@ -1,6 +1,6 @@
 ---
 name: task
-description: Turn an implementation requirement into an execution-ready plan, write it to a markdown task document, delegate implementation to a worker model (default opencode-go/deepseek-v4-pro), then have the original/main model review the resulting diff against the plan, manually fix issues, validate, and summarize. Use when the user asks to implement a feature/change through a planned handoff workflow.
+description: Turn an implementation requirement into an execution-ready plan, write it to a markdown task document, delegate implementation to a worker model (default opencode-go/deepseek-v4-pro), have the original/main model review and validate the diff, run super-review on the resulting changes, delegate review-driven fixes to DeepSeek V4 Pro subagents, then summarize and offer safe cleanup of any created worktrees. Use when the user asks to implement a feature/change through a planned handoff workflow.
 ---
 
 # Task
@@ -12,7 +12,10 @@ This skill is an orchestrated implementation workflow:
 1. The **main/orchestrating model** plans and owns decisions. Preferred model: `openai-codex/gpt-5.5` with `high` thinking.
 2. The plan is written to a markdown document.
 3. A single implementation worker applies the plan. Preferred worker model: `opencode-go/deepseek-v4-pro`.
-4. The main/orchestrating model reviews the worker's diff against the plan, manually fixes any issues, validates, and summarizes.
+4. The main/orchestrating model reviews the worker's diff against the plan, manually fixes any immediate issues, and validates.
+5. The main/orchestrating model runs the `super-review` skill on the resulting current changes.
+6. Actionable super-review findings are fixed by DeepSeek V4 Pro fix subagents, with the main model triaging, reviewing, validating, and owning final acceptance.
+7. The main/orchestrating model summarizes and offers safe cleanup of any created worktrees.
 
 ## Non-negotiables
 
@@ -21,9 +24,13 @@ This skill is an orchestrated implementation workflow:
 - The implementation worker must use `model: "opencode-go/deepseek-v4-pro"` unless that model is unavailable; if unavailable, ask before substituting `deepseek-v4-flash` or another opencode-go model.
 - Use the `subagent(...)` tool (from the `pi-subagents` package) to delegate implementation. Do **not** run `pi -p` synchronously inside a bash call — that hides live output, risks blind timeouts, and prevents progress visibility.
 - Launch the worker async and poll its progress via `subagent({ action: "status", id: "..." })` or by checking `git diff --stat` on the active worktree. The async completion mechanism delivers the worker's handoff naturally; do not hard-kill with a fixed timeout.
-- The main/orchestrating model performs the final review and any fix-up edits manually with normal tools (`read`, `edit`, `write`, `bash`). Do not outsource final acceptance.
+- The main/orchestrating model performs review, triage, validation, and final acceptance. It may delegate concrete super-review remediation to DeepSeek V4 Pro fix subagents, but must not outsource final acceptance.
 - Always create/update a markdown task plan before implementation.
-- Do not silently expand scope. Ask the user before product, architecture, migration, security, or dependency decisions that are not implied by the requirement.
+- After the implementation and main-model review/fixes, run the `super-review` skill on the actual current changes before finalizing.
+- Super-review remediation workers must use `model: "opencode-go/deepseek-v4-pro"` unless that model is unavailable; if unavailable, ask before substituting.
+- Do not launch parallel writer/fix agents into the same worktree. Prefer sequential fix agents in the active worktree; only use parallel fix agents when each has an isolated worktree and the main model will reconcile the results.
+- Do not silently expand scope. Ask the user before product, architecture, migration, security, or dependency decisions that are not implied by the requirement or required by a high-confidence super-review finding.
+- Do not automatically delete review/fix worktrees. At the end, state whether each created worktree appears safe to delete and offer the cleanup command or ask for permission to remove it.
 
 ## Inputs
 
@@ -170,9 +177,39 @@ After the worker finishes:
 4. If there are issues, the main model fixes them manually using normal file-editing tools.
 5. If a required fix involves unapproved scope/product/architecture/dependency/migration/security decisions, ask the user before proceeding.
 
-### 5. Final self-review
+### 5. Super-review gate and remediation
 
-After manual fixes, inspect the final diff again. For complex/risky changes, optionally run fresh-context review-only subagents for focused validation, but the main model still owns final acceptance.
+After the main-model review/fixes and focused validation, run the `super-review` skill on the resulting current changes.
+
+Before invoking super-review, make sure the review target represents the actual current task diff, not merely a stale branch tip. Provide the task plan path and the intended base/reference if useful. If the super-review flow creates an isolated worktree, record its path from the review output for final cleanup guidance.
+
+Triage the super-review result:
+
+1. Classify findings as:
+   - must-fix now: high-confidence High/Medium findings that are in scope.
+   - optional/follow-up: Low/nits, ambiguous findings, or items outside the approved scope.
+   - rejected: findings that are incorrect, already mitigated, or conflict with project constraints; briefly note why.
+2. For each must-fix-now item or coherent group of independent items, create a DeepSeek V4 Pro fix subagent.
+3. Keep the main model in charge: review each fix-agent diff, run focused validation, and manually repair anything the agent misses.
+4. If a finding requires unapproved product, architecture, dependency, migration, or security decisions, ask the user before fixing.
+
+**Launch a fix subagent:**
+
+```typescript
+subagent({
+  agent: "worker",
+  model: "opencode-go/deepseek-v4-pro",
+  task: "Fix only these super-review finding(s) from the current task diff:\n\n<FINDINGS>\n\nContext:\n- Task plan: <PLAN_PATH>\n- Super-review summary: <SUMMARY_OR_PATH>\n\nHard constraints:\n- Stay inside the finding(s) and approved task scope.\n- Follow existing repo conventions.\n- Do not make product/architecture/dependency/migration/security decisions beyond the approved scope; stop and report if one is needed.\n- Return changed files, fixes made, commands run with exit codes, validation evidence, and remaining issues.",
+  async: true,
+  context: "fork"
+})
+```
+
+Prefer sequential fix subagents in the active worktree so diffs are easy to review. If multiple fixes are truly independent and parallel work is worth it, use isolated worktrees for each writer, then have the main model reconcile/port the accepted changes back into the active task worktree before final validation.
+
+### 6. Final self-review and cleanup offer
+
+After super-review remediation, inspect the final diff again. For complex/risky changes, optionally run fresh-context review-only subagents for focused validation, but the main model still owns final acceptance.
 
 Minimum final checks:
 
@@ -183,6 +220,17 @@ git diff --check
 ```
 
 Run project-specific tests/lints/typechecks when appropriate and reasonably scoped.
+
+For every review/fix worktree created during the workflow:
+
+1. Check whether it is safe to delete:
+   - `git -C <WORKTREE> status --short --branch`
+   - confirm there are no unique, unported changes needed from that worktree.
+2. Do not delete automatically unless the user explicitly asks.
+3. In the final response, state one of:
+   - safe to delete, with `git worktree remove <WORKTREE>`.
+   - not safe to delete yet, with the reason.
+   - no extra worktrees were created.
 
 ## Final response format
 
@@ -199,8 +247,16 @@ Run project-specific tests/lints/typechecks when appropriate and reasonably scop
 ## Main-model review and fixes
 - <issues found during review and how they were fixed, or `No plan deviations found`>
 
+## Super-review and remediation
+- Super-review: <overall recommendation or `No actionable findings`>
+- DeepSeek fix subagents: <count and summary, or `None needed`>
+- Findings deferred/rejected: <brief reasons, or `None`>
+
 ## Validation
 - `<command>` — <result>
+
+## Worktree cleanup option
+- <`No extra worktrees created` OR `<path>` — safe/not safe to delete; command/next step>
 
 ## Remaining notes
 - <risks, follow-ups, skipped checks, or `None`>
