@@ -44,6 +44,7 @@ What it does:
 - `/skill:answer <question>` — Searches the current repo first, then related sibling repos when needed, and cites evidence for each answer.
 - `/skill:super-review <branch-or-url>` — Creates an isolated worktree for a GitHub/Bitbucket branch or branch name, reviews changes against the base like a senior/principal engineer, and returns the review in-chat only.
 - `/skill:task <requirement>` — Writes a detailed implementation plan to markdown, delegates implementation to `opencode-go/deepseek-v4-pro`, then has the main model review/fix the diff and summarize.
+- `/skill:worker <task>` — Quick model-switching shim: delegates the current request to the builtin `worker` subagent using `opencode-go/deepseek-v4-pro`, then returns the result.
 - `/skill:grill` — Grilling session that challenges plans against the domain model, sharpens terminology, and updates `CONTEXT.md`/ADRs inline.
 - `/skill:handover` — Writes a compact `handover.md` with session decisions, agreements, current state, and next steps.
 - `/skill:improve-architecture` — Finds deepening opportunities to improve testability, locality, leverage, and AI-navigability.
